@@ -1,0 +1,15 @@
+{
+  "name": "hacknova-ps13",
+  "version": "1.0.0",
+  "description": "ScholarPath Navigator - Smart Scholarship & Student Support Navigator (ISTE HackNova 2026, PS13)",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n server,client -c blue,green \"npm --prefix server start\" \"npm --prefix client run dev\"",
+    "test": "node server/engine.test.js",
+    "smoke": "node server/smoke.js"
+  },
+  "devDependencies": {
+    "concurrently": "8.2.2"
+  }
+}
