@@ -1,139 +1,166 @@
-/**
- * HackNova PS13 - Matching Engine (CommonJS)
- */
+// server/engine.js
+// Scholarship eligibility engine. Pure functions, zero dependencies (CommonJS).
+// Owner: Member 3. Used by server.js (Member 1).
+
+const TOTAL_CHECKS = 6;
+const SOFT_GPA_MARGIN = 0.5; // GPA shortfall up to this much is a "soft" failure
+
+function rupees(n) {
+  return "\u20B9" + Number(n).toLocaleString("en-IN");
+}
+
+function asArray(value, fallback) {
+  return Array.isArray(value) ? value : fallback;
+}
 
 function evaluateEligibility(student, scholarship) {
+  const s = student || {};
+  const sch = scholarship || {};
+
+  const gpa = Number(s.gpa) || 0;
+  const income = Number.isFinite(Number(s.income)) ? Number(s.income) : Infinity;
+  const category = s.category;
+  const gender = s.gender;
+  const level = s.education_level;
+  const held = asArray(s.documents, []);
+
+  const minGpa = Number(sch.min_gpa) || 0;
+  const maxIncome = Number.isFinite(Number(sch.max_income)) ? Number(sch.max_income) : Infinity;
+  const categories = asArray(sch.category_eligible, ["All"]);
+  const genderRule = sch.gender_eligible || "All";
+  const levels = asArray(sch.education_levels, ["UG"]);
+  const requiredDocs = asArray(sch.required_docs, []);
+
   const passedRules = [];
   const failedRules = [];
-  let isHardFail = false;
+  const hardFailures = [];
+  let missingDocs = [];
+  let gpaSoftFail = false;
 
-  const studentDocs = Array.isArray(student.documents) ? student.documents : [];
-  const reqDocs = Array.isArray(scholarship.required_docs) ? scholarship.required_docs : [];
-  const catEligible = Array.isArray(scholarship.category_eligible) ? scholarship.category_eligible : ["All"];
-  const eduLevels = Array.isArray(scholarship.education_levels) ? scholarship.education_levels : ["UG"];
-
-  // 1. GPA Check
-  const minGpa = Number(scholarship.min_gpa) || 0;
-  const studentGpa = Number(student.gpa) || 0;
-  if (studentGpa >= minGpa) {
-    passedRules.push(`GPA ${studentGpa} meets the required ${minGpa}`);
+  // 1. GPA
+  if (gpa >= minGpa) {
+    passedRules.push("GPA " + gpa + " meets the required " + minGpa);
   } else {
-    failedRules.push(`GPA ${studentGpa} is below the required ${minGpa}`);
-    // Shortfall greater than 0.5 is a hard failure; <= 0.5 is soft
-    if (minGpa - studentGpa > 0.5) {
-      isHardFail = true;
+    const shortfall = Math.round((minGpa - gpa) * 100) / 100;
+    const msg = "GPA " + gpa + " is below the required " + minGpa;
+    failedRules.push(msg);
+    if (shortfall <= SOFT_GPA_MARGIN) {
+      gpaSoftFail = true;
+    } else {
+      hardFailures.push(msg);
     }
   }
 
-  // 2. Income Check (Hard failure)
-  const maxIncome = Number(scholarship.max_income) || Infinity;
-  const studentIncome = Number(student.income) || 0;
-  if (studentIncome <= maxIncome) {
-    passedRules.push(`Income is within the ₹${maxIncome.toLocaleString('en-IN')} limit`);
+  // 2. Income
+  if (income <= maxIncome) {
+    passedRules.push("Income is within the " + rupees(maxIncome) + " limit");
   } else {
-    const diff = studentIncome - maxIncome;
-    failedRules.push(`Income exceeds the ₹${maxIncome.toLocaleString('en-IN')} limit by ₹${diff.toLocaleString('en-IN')}`);
-    isHardFail = true;
+    const msg = Number.isFinite(income)
+      ? "Income exceeds the " + rupees(maxIncome) + " limit by " + rupees(income - maxIncome)
+      : "Income not provided";
+    failedRules.push(msg);
+    hardFailures.push(msg);
   }
 
-  // 3. Category Check (Hard failure)
-  const studentCat = student.category || "General";
-  if (catEligible.includes("All") || catEligible.includes(studentCat)) {
-    passedRules.push(`Category ${studentCat} matches requirement`);
+  // 3. Category
+  if (categories.includes("All") || categories.includes(category)) {
+    passedRules.push(
+      categories.includes("All")
+        ? "Open to all categories"
+        : "Category " + category + " is eligible"
+    );
   } else {
-    failedRules.push(`Open only to ${catEligible.join(', ')} category`);
-    isHardFail = true;
+    const msg = "Open only to " + categories.join("/") + " category";
+    failedRules.push(msg);
+    hardFailures.push(msg);
   }
 
-  // 4. Gender Check (Hard failure)
-  const studentGen = student.gender || "All";
-  const genEligible = scholarship.gender_eligible || "All";
-  if (genEligible === "All" || genEligible === studentGen) {
-    passedRules.push(`Gender requirement met`);
+  // 4. Gender
+  if (genderRule === "All" || genderRule === gender) {
+    passedRules.push(
+      genderRule === "All" ? "Open to all genders" : "Open to " + genderRule + " students"
+    );
   } else {
-    failedRules.push(`Open only to ${genEligible} students`);
-    isHardFail = true;
+    const msg = "Open only to " + genderRule + " students";
+    failedRules.push(msg);
+    hardFailures.push(msg);
   }
 
-  // 5. Education Level Check (Hard failure)
-  const studentEdu = student.education_level || "UG";
-  if (eduLevels.includes(studentEdu)) {
-    passedRules.push(`Level ${studentEdu} is eligible`);
+  // 5. Education level
+  if (levels.includes(level)) {
+    passedRules.push("Education level " + level + " is eligible");
   } else {
-    failedRules.push(`Meant for ${eduLevels.join(', ')} students`);
-    isHardFail = true;
+    const msg = "Meant for " + levels.join("/") + " students";
+    failedRules.push(msg);
+    hardFailures.push(msg);
   }
 
-  // 6. Documents Check (Soft failure)
-  const missingDocs = reqDocs.filter(doc => !studentDocs.includes(doc));
+  // 6. Documents
+  missingDocs = requiredDocs.filter(function (d) {
+    return !held.includes(d);
+  });
   if (missingDocs.length === 0) {
-    passedRules.push(`All required documents available`);
+    passedRules.push("All required documents are ready");
   } else {
-    failedRules.push(`Missing documents: ${missingDocs.join(', ')}`);
+    failedRules.push("Missing documents: " + missingDocs.join(", "));
   }
 
-  // Determine Overall Status
-  let status = "MATCHED";
-  if (isHardFail) {
+  // Status
+  let status;
+  if (hardFailures.length > 0) {
     status = "INELIGIBLE";
   } else if (failedRules.length > 0) {
     status = "PARTIAL";
+  } else {
+    status = "MATCHED";
   }
 
-  // Calculate Score (0 to 100)
-  const score = Math.round((passedRules.length / 6) * 100);
+  const score = Math.round((passedRules.length / TOTAL_CHECKS) * 100);
+  const title = sch.title || "this scholarship";
 
-  // Exact Rationale Sentences
-  let rationale = "";
+  // Rationale (one sentence)
+  let rationale;
   if (status === "MATCHED") {
-    rationale = `You meet every requirement for ${scholarship.title}; apply before ${scholarship.deadline || 'deadline'}.`;
+    rationale = "You meet every requirement for " + title + "; apply before " + sch.deadline + ".";
   } else if (status === "PARTIAL") {
-    const missingText = missingDocs.length > 0 ? missingDocs.join(', ') : 'a slightly higher GPA';
-    rationale = `You qualify on the criteria for ${scholarship.title} but still need: ${missingText}.`;
+    const needs = missingDocs.slice();
+    if (gpaSoftFail) needs.push("a slightly higher GPA");
+    rationale =
+      "You qualify on the criteria for " + title + " but still need: " + needs.join(", ") + ".";
   } else {
-    rationale = `Not eligible for ${scholarship.title}: ${failedRules[0] || 'criteria not met'}.`;
+    rationale = "Not eligible for " + title + ": " + hardFailures[0] + ".";
   }
 
   return {
-    status,
-    score,
-    passedRules,
-    failedRules,
-    missingDocs,
-    rationale
+    status: status,
+    score: score,
+    passedRules: passedRules,
+    failedRules: failedRules,
+    missingDocs: missingDocs,
+    rationale: rationale,
   };
 }
 
 function evaluateAll(student, scholarships) {
-  const matched = [];
-  const partial = [];
-  const ineligible = [];
+  const grouped = { matched: [], partial: [], ineligible: [] };
+  const list = Array.isArray(scholarships) ? scholarships : [];
 
-  for (const item of scholarships) {
-    const evaluated = {
-      ...item,
-      ...evaluateEligibility(student, item)
-    };
+  list.forEach(function (sch) {
+    const result = evaluateEligibility(student, sch);
+    const item = Object.assign({}, sch, result);
+    if (result.status === "MATCHED") grouped.matched.push(item);
+    else if (result.status === "PARTIAL") grouped.partial.push(item);
+    else grouped.ineligible.push(item);
+  });
 
-    if (evaluated.status === "MATCHED") {
-      matched.push(evaluated);
-    } else if (evaluated.status === "PARTIAL") {
-      partial.push(evaluated);
-    } else {
-      ineligible.push(evaluated);
-    }
-  }
+  const byScoreThenId = function (a, b) {
+    return b.score - a.score || a.id - b.id;
+  };
+  grouped.matched.sort(byScoreThenId);
+  grouped.partial.sort(byScoreThenId);
+  grouped.ineligible.sort(byScoreThenId);
 
-  // Sort by score descending, then by id ascending
-  const sortFn = (a, b) => b.score - a.score || a.id - b.id;
-  matched.sort(sortFn);
-  partial.sort(sortFn);
-  ineligible.sort(sortFn);
-
-  return { matched, partial, ineligible };
+  return grouped;
 }
 
-module.exports = {
-  evaluateEligibility,
-  evaluateAll
-};
+module.exports = { evaluateEligibility, evaluateAll };
